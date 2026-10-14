@@ -1,4 +1,4 @@
-name = "target-coaching-centre"
+name = "target-coaching-website-updated"
 main = "src/worker/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
@@ -12,7 +12,8 @@ not_found_handling = "single-page-application"
 binding = "PHOTOS_BUCKET"
 bucket_name = "target-photos"
 
-[[d1_databases]]
-binding = "DB"
-database_name = "target_coaching_db"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+# To configure D1 via wrangler.toml, obtain your D1 Database ID (UUID) from Cloudflare Dashboard:
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "target_coaching_db"
+# database_id = "<YOUR_D1_DATABASE_UUID>"
