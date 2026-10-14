@@ -584,6 +584,21 @@ export const AdminPage: React.FC = () => {
                 </p>
               </div>
 
+              {/* Free-Tier Hosting Indicator & Notice */}
+              <div className="mb-6 p-4 rounded-2xl bg-blue-50 border border-blue-200 text-blue-900 text-xs sm:text-sm flex items-start space-x-3">
+                <div className="px-2 py-0.5 rounded-md bg-blue-600 text-white font-black text-[10px] uppercase tracking-wider shrink-0 mt-0.5 shadow-sm">
+                  Free Tier
+                </div>
+                <div className="space-y-1">
+                  <p className="font-bold text-slate-900">
+                    Active Photo: Static Website Asset (/ashvani-sir.png)
+                  </p>
+                  <p className="text-slate-600 text-xs leading-relaxed">
+                    Ashvani Sir's official portrait is permanently served across the website at zero hosting cost without requiring a credit card or Cloudflare R2 paid subscription. To update the photo for free, place your new image in <code className="bg-blue-100 text-blue-900 px-1 py-0.5 rounded font-mono font-semibold">public/ashvani-sir.png</code> in GitHub and push.
+                  </p>
+                </div>
+              </div>
+
               {photoSuccessMsg && (
                 <div className="mb-6 p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm flex items-start space-x-3">
                   <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />

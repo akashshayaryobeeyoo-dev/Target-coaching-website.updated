@@ -328,7 +328,7 @@ export default {
       return jsonResponse({
         photoUrl,
         lastUpdated,
-        storageBackend: env.PHOTOS_BUCKET ? 'cloudflare-r2' : 'default-static',
+        storageBackend: env.PHOTOS_BUCKET ? 'cloudflare-r2' : 'static-asset',
         databaseBackend: env.DB ? 'cloudflare-d1' : 'default-memory'
       });
     }
@@ -344,10 +344,11 @@ export default {
       if (!env.PHOTOS_BUCKET) {
         return jsonResponse(
           {
-            error: 'Cloudflare R2 persistent storage is not configured.',
-            resolution: 'Create an R2 bucket and add "binding = PHOTOS_BUCKET" to your wrangler.jsonc configuration.'
+            error: 'Free-Tier Mode: Dynamic edge photo storage via Cloudflare R2 is not active.',
+            message: "Ashvani Sir's official photograph is served as a high-speed static asset (/ashvani-sir.png) at zero cost without requiring a credit card or payment method on Cloudflare.",
+            resolution: 'To change the photo on the free tier, commit your updated image to "public/ashvani-sir.png" in your repository. To enable live web uploads, configure an R2 bucket in Cloudflare.'
           },
-          503
+          400
         );
       }
 

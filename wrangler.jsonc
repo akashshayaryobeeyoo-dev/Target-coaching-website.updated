@@ -10,17 +10,14 @@
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application"
-  },
-  "r2_buckets": [
-    {
-      "binding": "PHOTOS_BUCKET",
-      "bucket_name": "target-photos"
-    }
-  ]
-  // D1 Database Binding:
-  // To avoid deployment error [code: 10021], database_id must be a real Cloudflare D1 UUID.
-  // Once you obtain your D1 Database ID from Cloudflare (see instructions), you can uncomment
-  // the block below, OR simply bind it via Cloudflare Dashboard -> Settings -> Bindings.
+  }
+  // Free-Tier Configuration (100% Free - No Credit Card or Payment Method Required):
+  // 1. Cloudflare R2 is removed because R2 requires payment authorization on Cloudflare.
+  //    Ashvani Sir's official photograph is served as a zero-cost static asset (/ashvani-sir.png).
+  // 2. Cloudflare D1 Database is 100% free with no credit card required.
+  //    To enable persistent D1 database storage for inquiries, settings, and notices:
+  //    Bind in Cloudflare Dashboard: Settings -> Bindings -> Add -> D1 database (Variable: DB)
+  //    OR uncomment the block below with your actual D1 Database ID (UUID):
   /*
   ,
   "d1_databases": [
