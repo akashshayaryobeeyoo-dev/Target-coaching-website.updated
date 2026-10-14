@@ -10,10 +10,10 @@ export interface Env {
   // Static Assets fetcher when deployed with Cloudflare Workers Assets
   ASSETS?: Fetcher;
 
-  // Authentication secrets configured via `wrangler secret put` or Cloudflare Dashboard
-  ADMIN_USERNAME?: string;
-  ADMIN_PASSWORD?: string;
-  ADMIN_SESSION_SECRET?: string;
+  // Authentication secrets configured via `wrangler secret put`, Cloudflare Dashboard, or Secrets Store
+  ADMIN_USERNAME?: string | SecretsStoreSecret | any;
+  ADMIN_PASSWORD?: string | SecretsStoreSecret | any;
+  ADMIN_SESSION_SECRET?: string | SecretsStoreSecret | any;
 }
 
 export interface AdminSession {

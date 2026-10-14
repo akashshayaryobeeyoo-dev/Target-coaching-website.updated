@@ -66,61 +66,138 @@ function jsonResponse(data: unknown, status = 200, extraHeaders: Record<string, 
   return withSecurityHeaders(new Response(JSON.stringify(data), { status, headers }));
 }
 
-// Robust secret/env extractor supporting direct env, case variations, aliases, and nodejs_compat process.env
-function getEnvSecret(env: any, primaryKey: string, aliases: string[] = []): string | null {
+// Prototype-aware property key extractor for Cloudflare V8 host objects
+function getAllEnvKeys(obj: any): string[] {
+  if (!obj || typeof obj !== 'object') return [];
+  const keys = new Set<string>();
+  let curr = obj;
+  while (curr && curr !== Object.prototype) {
+    try {
+      for (const k of Object.getOwnPropertyNames(curr)) {
+        keys.add(k);
+      }
+    } catch {}
+    try {
+      curr = Object.getPrototypeOf(curr);
+    } catch {
+      break;
+    }
+  }
+  return Array.from(keys);
+}
+
+// Robust async secret/env extractor supporting direct env, prototype getters, SecretsStoreSecret (.get()), cloudflare:workers, case variations, aliases, and nodejs_compat process.env
+async function resolveSecretValue(val: any): Promise<string | null> {
+  if (val === undefined || val === null) return null;
+  if (typeof val === 'string') {
+    const trimmed = val.replace(/['"]/g, '').trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  // Cloudflare Secrets Store or binding with .get(): Promise<string>
+  if (typeof val === 'object' && typeof val.get === 'function') {
+    try {
+      const res = await val.get();
+      if (typeof res === 'string') {
+        const trimmed = res.replace(/['"]/g, '').trim();
+        return trimmed.length > 0 ? trimmed : null;
+      }
+    } catch (err) {
+      console.warn('Error reading secret via .get():', err);
+    }
+  }
+  // Callable function: () => string | Promise<string>
+  if (typeof val === 'function') {
+    try {
+      const res = await val();
+      if (typeof res === 'string') {
+        const trimmed = res.replace(/['"]/g, '').trim();
+        return trimmed.length > 0 ? trimmed : null;
+      }
+    } catch {}
+  }
+  // Object with value property
+  if (typeof val === 'object' && typeof val.value === 'string') {
+    const trimmed = val.value.replace(/['"]/g, '').trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  return null;
+}
+
+async function getEnvSecret(env: any, primaryKey: string, aliases: string[] = []): Promise<string | null> {
   const allKeys = [primaryKey, ...aliases];
 
-  // 1. Direct properties on env binding
+  // 1. Check direct properties and prototype getters on passed env binding
   if (env && typeof env === 'object') {
     for (const key of allKeys) {
-      if (typeof env[key] === 'string' && env[key].trim().length > 0) {
-        return env[key].replace(/['"]/g, '').trim();
+      if (key in env || env[key] !== undefined) {
+        const res = await resolveSecretValue(env[key]);
+        if (res) return res;
       }
     }
-    // Case-insensitive match on env
+    // Deep prototype inspection for case-insensitive matching
     const lowerKeySet = new Set(allKeys.map(k => k.toLowerCase()));
-    for (const [k, v] of Object.entries(env)) {
-      if (lowerKeySet.has(k.toLowerCase()) && typeof v === 'string' && v.trim().length > 0) {
-        return v.replace(/['"]/g, '').trim();
+    const allEnvKeys = getAllEnvKeys(env);
+    for (const k of allEnvKeys) {
+      if (lowerKeySet.has(k.toLowerCase())) {
+        const res = await resolveSecretValue(env[k]);
+        if (res) return res;
       }
     }
   }
 
-  // 2. Node.js compatibility process.env (populated in Workers with nodejs_compat)
+  // 2. Check Node.js compatibility process.env (when nodejs_compat is enabled)
   if (typeof process !== 'undefined' && process && process.env) {
     for (const key of allKeys) {
-      const val = process.env[key];
-      if (typeof val === 'string' && val.trim().length > 0) {
-        return val.replace(/['"]/g, '').trim();
+      if (key in process.env || process.env[key] !== undefined) {
+        const res = await resolveSecretValue(process.env[key]);
+        if (res) return res;
       }
     }
     const lowerKeySet = new Set(allKeys.map(k => k.toLowerCase()));
     for (const [k, v] of Object.entries(process.env)) {
-      if (lowerKeySet.has(k.toLowerCase()) && typeof v === 'string' && v.trim().length > 0) {
-        return v.replace(/['"]/g, '').trim();
+      if (lowerKeySet.has(k.toLowerCase())) {
+        const res = await resolveSecretValue(v);
+        if (res) return res;
       }
     }
   }
 
-  // 3. globalThis fallback
+  // 3. Check cloudflare:workers global env (if available)
+  try {
+    const cfModule = await import('cloudflare:workers');
+    if (cfModule && cfModule.env) {
+      for (const key of allKeys) {
+        const res = await resolveSecretValue((cfModule.env as any)[key]);
+        if (res) return res;
+      }
+      const lowerKeySet = new Set(allKeys.map(k => k.toLowerCase()));
+      const allCfKeys = getAllEnvKeys(cfModule.env);
+      for (const k of allCfKeys) {
+        if (lowerKeySet.has(k.toLowerCase())) {
+          const res = await resolveSecretValue((cfModule.env as any)[k]);
+          if (res) return res;
+        }
+      }
+    }
+  } catch {}
+
+  // 4. globalThis fallback
   if (typeof globalThis !== 'undefined' && globalThis) {
     for (const key of allKeys) {
-      const val = (globalThis as any)[key];
-      if (typeof val === 'string' && val.trim().length > 0) {
-        return val.replace(/['"]/g, '').trim();
-      }
+      const res = await resolveSecretValue((globalThis as any)[key]);
+      if (res) return res;
     }
   }
 
   return null;
 }
 
-function getSecretKey(env: Env): string {
-  return (
-    getEnvSecret(env, 'ADMIN_SESSION_SECRET', ['admin_session_secret', 'SESSION_SECRET']) ||
-    getEnvSecret(env, 'ADMIN_PASSWORD', ['admin_password', 'ADMIN_PASS', 'ADMINPASSWORD', 'ADMIN_SECRET']) ||
-    'target-coaching-cloudflare-salt-secret-key-2026'
-  );
+async function getSecretKey(env: Env): Promise<string> {
+  const sessionSecret = await getEnvSecret(env, 'ADMIN_SESSION_SECRET', ['admin_session_secret', 'SESSION_SECRET']);
+  if (sessionSecret) return sessionSecret;
+  const adminPass = await getEnvSecret(env, 'ADMIN_PASSWORD', ['admin_password', 'ADMIN_PASS', 'ADMINPASSWORD', 'ADMIN_SECRET']);
+  if (adminPass) return adminPass;
+  return 'target-coaching-cloudflare-salt-secret-key-2026';
 }
 
 // Helper: authenticate bearer token or session cookie
@@ -143,7 +220,8 @@ async function authenticateRequest(request: Request, env: Env): Promise<{ author
     return { authorized: false };
   }
 
-  const result = await verifySessionToken(token, getSecretKey(env));
+  const secretKey = await getSecretKey(env);
+  const result = await verifySessionToken(token, secretKey);
   if (!result.valid || !result.username) {
     return { authorized: false };
   }
@@ -232,11 +310,11 @@ export default {
       validUsers.add('ashvani');
       validUsers.add('ashvanisir');
 
-      const configuredEnvUser = getEnvSecret(env, 'ADMIN_USERNAME', [
+      const configuredEnvUser = (await getEnvSecret(env, 'ADMIN_USERNAME', [
         'admin_username',
         'ADMIN_USER',
         'ADMINUSERNAME'
-      ])?.toLowerCase() || null;
+      ]))?.toLowerCase() || null;
       if (configuredEnvUser) {
         validUsers.add(configuredEnvUser);
         if (configuredEnvUser.includes('@')) {
@@ -248,7 +326,7 @@ export default {
 
       // Validate password
       let passwordMatches = false;
-      const configuredEnvPass = getEnvSecret(env, 'ADMIN_PASSWORD', [
+      const configuredEnvPass = await getEnvSecret(env, 'ADMIN_PASSWORD', [
         'admin_password',
         'ADMIN_PASS',
         'ADMINPASSWORD',
@@ -295,7 +373,8 @@ export default {
       clearRateLimit(clientIp);
 
       // Generate stateless HMAC-SHA256 session token
-      const token = await createSessionToken(inputUser, getSecretKey(env));
+      const sessionKey = await getSecretKey(env);
+      const token = await createSessionToken(inputUser, sessionKey);
       const cookieHeader = `target_admin_session=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=86400`;
 
       return jsonResponse(
@@ -749,6 +828,8 @@ export default {
     // 6. HEALTH & CLOUDFLARE STATUS CHECK
     // ==========================================
     if (request.method === 'GET' && path === '/api/health') {
+      const hasAdminPass = !!(await getEnvSecret(env, 'ADMIN_PASSWORD', ['admin_password', 'ADMIN_PASS', 'ADMINPASSWORD', 'ADMIN_SECRET']));
+      const hasSessionSecret = !!(await getEnvSecret(env, 'ADMIN_SESSION_SECRET', ['admin_session_secret', 'SESSION_SECRET']));
       return jsonResponse({
         status: 'healthy',
         timestamp: new Date().toISOString(),
@@ -756,10 +837,7 @@ export default {
         bindings: {
           r2StorageConfigured: !!env.PHOTOS_BUCKET,
           d1DatabaseConfigured: !!env.DB,
-          adminSecretConfigured: !!(
-            getEnvSecret(env, 'ADMIN_PASSWORD', ['admin_password', 'ADMIN_PASS', 'ADMINPASSWORD', 'ADMIN_SECRET']) ||
-            getEnvSecret(env, 'ADMIN_SESSION_SECRET', ['admin_session_secret', 'SESSION_SECRET'])
-          )
+          adminSecretConfigured: hasAdminPass || hasSessionSecret
         }
       });
     }
