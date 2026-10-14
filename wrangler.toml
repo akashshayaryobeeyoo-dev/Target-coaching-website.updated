@@ -1,0 +1,18 @@
+name = "target-coaching-centre"
+main = "src/worker/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+[[r2_buckets]]
+binding = "PHOTOS_BUCKET"
+bucket_name = "target-photos"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "target_coaching_db"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
