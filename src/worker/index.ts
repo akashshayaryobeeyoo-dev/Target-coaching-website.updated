@@ -66,8 +66,61 @@ function jsonResponse(data: unknown, status = 200, extraHeaders: Record<string, 
   return withSecurityHeaders(new Response(JSON.stringify(data), { status, headers }));
 }
 
+// Robust secret/env extractor supporting direct env, case variations, aliases, and nodejs_compat process.env
+function getEnvSecret(env: any, primaryKey: string, aliases: string[] = []): string | null {
+  const allKeys = [primaryKey, ...aliases];
+
+  // 1. Direct properties on env binding
+  if (env && typeof env === 'object') {
+    for (const key of allKeys) {
+      if (typeof env[key] === 'string' && env[key].trim().length > 0) {
+        return env[key].replace(/['"]/g, '').trim();
+      }
+    }
+    // Case-insensitive match on env
+    const lowerKeySet = new Set(allKeys.map(k => k.toLowerCase()));
+    for (const [k, v] of Object.entries(env)) {
+      if (lowerKeySet.has(k.toLowerCase()) && typeof v === 'string' && v.trim().length > 0) {
+        return v.replace(/['"]/g, '').trim();
+      }
+    }
+  }
+
+  // 2. Node.js compatibility process.env (populated in Workers with nodejs_compat)
+  if (typeof process !== 'undefined' && process && process.env) {
+    for (const key of allKeys) {
+      const val = process.env[key];
+      if (typeof val === 'string' && val.trim().length > 0) {
+        return val.replace(/['"]/g, '').trim();
+      }
+    }
+    const lowerKeySet = new Set(allKeys.map(k => k.toLowerCase()));
+    for (const [k, v] of Object.entries(process.env)) {
+      if (lowerKeySet.has(k.toLowerCase()) && typeof v === 'string' && v.trim().length > 0) {
+        return v.replace(/['"]/g, '').trim();
+      }
+    }
+  }
+
+  // 3. globalThis fallback
+  if (typeof globalThis !== 'undefined' && globalThis) {
+    for (const key of allKeys) {
+      const val = (globalThis as any)[key];
+      if (typeof val === 'string' && val.trim().length > 0) {
+        return val.replace(/['"]/g, '').trim();
+      }
+    }
+  }
+
+  return null;
+}
+
 function getSecretKey(env: Env): string {
-  return env.ADMIN_SESSION_SECRET || env.ADMIN_PASSWORD || 'target-coaching-cloudflare-salt-secret-key-2026';
+  return (
+    getEnvSecret(env, 'ADMIN_SESSION_SECRET', ['admin_session_secret', 'SESSION_SECRET']) ||
+    getEnvSecret(env, 'ADMIN_PASSWORD', ['admin_password', 'ADMIN_PASS', 'ADMINPASSWORD', 'ADMIN_SECRET']) ||
+    'target-coaching-cloudflare-salt-secret-key-2026'
+  );
 }
 
 // Helper: authenticate bearer token or session cookie
@@ -179,7 +232,11 @@ export default {
       validUsers.add('ashvani');
       validUsers.add('ashvanisir');
 
-      const configuredEnvUser = env.ADMIN_USERNAME ? env.ADMIN_USERNAME.replace(/['"]/g, '').trim().toLowerCase() : null;
+      const configuredEnvUser = getEnvSecret(env, 'ADMIN_USERNAME', [
+        'admin_username',
+        'ADMIN_USER',
+        'ADMINUSERNAME'
+      ])?.toLowerCase() || null;
       if (configuredEnvUser) {
         validUsers.add(configuredEnvUser);
         if (configuredEnvUser.includes('@')) {
@@ -191,7 +248,12 @@ export default {
 
       // Validate password
       let passwordMatches = false;
-      const configuredEnvPass = env.ADMIN_PASSWORD ? env.ADMIN_PASSWORD.replace(/['"]/g, '').trim() : null;
+      const configuredEnvPass = getEnvSecret(env, 'ADMIN_PASSWORD', [
+        'admin_password',
+        'ADMIN_PASS',
+        'ADMINPASSWORD',
+        'ADMIN_SECRET'
+      ]);
 
       // Check against D1 admin table if configured
       if (env.DB) {
@@ -694,7 +756,10 @@ export default {
         bindings: {
           r2StorageConfigured: !!env.PHOTOS_BUCKET,
           d1DatabaseConfigured: !!env.DB,
-          adminSecretConfigured: !!(env.ADMIN_PASSWORD || env.ADMIN_SESSION_SECRET)
+          adminSecretConfigured: !!(
+            getEnvSecret(env, 'ADMIN_PASSWORD', ['admin_password', 'ADMIN_PASS', 'ADMINPASSWORD', 'ADMIN_SECRET']) ||
+            getEnvSecret(env, 'ADMIN_SESSION_SECRET', ['admin_session_secret', 'SESSION_SECRET'])
+          )
         }
       });
     }
