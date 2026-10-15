@@ -8,6 +8,9 @@ directory = "./dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
 
+[vars]
+ADMIN_USERNAME = "targetadmin"
+
 # Free-Tier Configuration (100% Free - No Credit Card Required):
 # 1. R2 bucket removed because R2 requires a payment method on file.
 #    Ashvani Sir's official photograph is served as a zero-cost static asset (/ashvani-sir.png).

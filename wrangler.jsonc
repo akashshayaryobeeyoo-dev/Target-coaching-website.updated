@@ -10,6 +10,9 @@
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application"
+  },
+  "vars": {
+    "ADMIN_USERNAME": "targetadmin"
   }
   // Free-Tier Configuration (100% Free - No Credit Card or Payment Method Required):
   // 1. Cloudflare R2 is removed because R2 requires payment authorization on Cloudflare.

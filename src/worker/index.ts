@@ -93,12 +93,15 @@ async function resolveSecretValue(val: any): Promise<string | null> {
     const trimmed = val.replace(/['"]/g, '').trim();
     return trimmed.length > 0 ? trimmed : null;
   }
+  if (typeof val === 'number' || typeof val === 'boolean') {
+    return String(val).trim();
+  }
   // Cloudflare Secrets Store or binding with .get(): Promise<string>
   if (typeof val === 'object' && typeof val.get === 'function') {
     try {
       const res = await val.get();
-      if (typeof res === 'string') {
-        const trimmed = res.replace(/['"]/g, '').trim();
+      if (typeof res === 'string' || typeof res === 'number') {
+        const trimmed = String(res).replace(/['"]/g, '').trim();
         return trimmed.length > 0 ? trimmed : null;
       }
     } catch (err) {
@@ -109,15 +112,15 @@ async function resolveSecretValue(val: any): Promise<string | null> {
   if (typeof val === 'function') {
     try {
       const res = await val();
-      if (typeof res === 'string') {
-        const trimmed = res.replace(/['"]/g, '').trim();
+      if (typeof res === 'string' || typeof res === 'number') {
+        const trimmed = String(res).replace(/['"]/g, '').trim();
         return trimmed.length > 0 ? trimmed : null;
       }
     } catch {}
   }
   // Object with value property
-  if (typeof val === 'object' && typeof val.value === 'string') {
-    const trimmed = val.value.replace(/['"]/g, '').trim();
+  if (typeof val === 'object' && typeof val.value !== 'undefined') {
+    const trimmed = String(val.value).replace(/['"]/g, '').trim();
     return trimmed.length > 0 ? trimmed : null;
   }
   return null;
@@ -126,40 +129,66 @@ async function resolveSecretValue(val: any): Promise<string | null> {
 async function getEnvSecret(env: any, primaryKey: string, aliases: string[] = []): Promise<string | null> {
   const allKeys = [primaryKey, ...aliases];
 
-  // 1. Check direct properties and prototype getters on passed env binding
+  // 1. Check direct properties and Reflect.get on passed env binding
   if (env && typeof env === 'object') {
     for (const key of allKeys) {
-      if (key in env || env[key] !== undefined) {
-        const res = await resolveSecretValue(env[key]);
-        if (res) return res;
-      }
+      try {
+        if (key in env || env[key] !== undefined) {
+          const res = await resolveSecretValue(env[key]);
+          if (res) return res;
+        }
+      } catch {}
+      try {
+        const val = Reflect.get(env, key);
+        if (val !== undefined && val !== null) {
+          const res = await resolveSecretValue(val);
+          if (res) return res;
+        }
+      } catch {}
     }
+
     // Deep prototype inspection for case-insensitive matching
-    const lowerKeySet = new Set(allKeys.map(k => k.toLowerCase()));
-    const allEnvKeys = getAllEnvKeys(env);
-    for (const k of allEnvKeys) {
-      if (lowerKeySet.has(k.toLowerCase())) {
-        const res = await resolveSecretValue(env[k]);
-        if (res) return res;
+    try {
+      const lowerKeySet = new Set(allKeys.map(k => k.toLowerCase()));
+      const allEnvKeys = getAllEnvKeys(env);
+      for (const k of allEnvKeys) {
+        if (lowerKeySet.has(k.toLowerCase())) {
+          try {
+            const rawVal = env[k] !== undefined ? env[k] : Reflect.get(env, k);
+            const res = await resolveSecretValue(rawVal);
+            if (res) return res;
+          } catch {}
+        }
       }
-    }
+    } catch {}
   }
 
   // 2. Check Node.js compatibility process.env (when nodejs_compat is enabled)
   if (typeof process !== 'undefined' && process && process.env) {
     for (const key of allKeys) {
-      if (key in process.env || process.env[key] !== undefined) {
-        const res = await resolveSecretValue(process.env[key]);
-        if (res) return res;
-      }
+      try {
+        if (key in process.env || process.env[key] !== undefined) {
+          const res = await resolveSecretValue(process.env[key]);
+          if (res) return res;
+        }
+      } catch {}
+      try {
+        const val = Reflect.get(process.env, key);
+        if (val !== undefined && val !== null) {
+          const res = await resolveSecretValue(val);
+          if (res) return res;
+        }
+      } catch {}
     }
-    const lowerKeySet = new Set(allKeys.map(k => k.toLowerCase()));
-    for (const [k, v] of Object.entries(process.env)) {
-      if (lowerKeySet.has(k.toLowerCase())) {
-        const res = await resolveSecretValue(v);
-        if (res) return res;
+    try {
+      const lowerKeySet = new Set(allKeys.map(k => k.toLowerCase()));
+      for (const [k, v] of Object.entries(process.env)) {
+        if (lowerKeySet.has(k.toLowerCase())) {
+          const res = await resolveSecretValue(v);
+          if (res) return res;
+        }
       }
-    }
+    } catch {}
   }
 
   // 3. Check cloudflare:workers global env (if available)
@@ -167,25 +196,34 @@ async function getEnvSecret(env: any, primaryKey: string, aliases: string[] = []
     const cfModule = await import('cloudflare:workers');
     if (cfModule && cfModule.env) {
       for (const key of allKeys) {
-        const res = await resolveSecretValue((cfModule.env as any)[key]);
-        if (res) return res;
-      }
-      const lowerKeySet = new Set(allKeys.map(k => k.toLowerCase()));
-      const allCfKeys = getAllEnvKeys(cfModule.env);
-      for (const k of allCfKeys) {
-        if (lowerKeySet.has(k.toLowerCase())) {
-          const res = await resolveSecretValue((cfModule.env as any)[k]);
+        try {
+          const rawVal = (cfModule.env as any)[key] !== undefined ? (cfModule.env as any)[key] : Reflect.get(cfModule.env, key);
+          const res = await resolveSecretValue(rawVal);
           if (res) return res;
-        }
+        } catch {}
       }
+      try {
+        const lowerKeySet = new Set(allKeys.map(k => k.toLowerCase()));
+        const allCfKeys = getAllEnvKeys(cfModule.env);
+        for (const k of allCfKeys) {
+          if (lowerKeySet.has(k.toLowerCase())) {
+            const rawVal = (cfModule.env as any)[k] !== undefined ? (cfModule.env as any)[k] : Reflect.get(cfModule.env, k);
+            const res = await resolveSecretValue(rawVal);
+            if (res) return res;
+          }
+        }
+      } catch {}
     }
   } catch {}
 
   // 4. globalThis fallback
   if (typeof globalThis !== 'undefined' && globalThis) {
     for (const key of allKeys) {
-      const res = await resolveSecretValue((globalThis as any)[key]);
-      if (res) return res;
+      try {
+        const rawVal = (globalThis as any)[key] !== undefined ? (globalThis as any)[key] : Reflect.get(globalThis, key);
+        const res = await resolveSecretValue(rawVal);
+        if (res) return res;
+      } catch {}
     }
   }
 
@@ -829,7 +867,12 @@ export default {
     // ==========================================
     if (request.method === 'GET' && path === '/api/health') {
       const hasAdminPass = !!(await getEnvSecret(env, 'ADMIN_PASSWORD', ['admin_password', 'ADMIN_PASS', 'ADMINPASSWORD', 'ADMIN_SECRET']));
+      const hasAdminUser = !!(await getEnvSecret(env, 'ADMIN_USERNAME', ['admin_username', 'ADMIN_USER', 'ADMINUSERNAME']));
       const hasSessionSecret = !!(await getEnvSecret(env, 'ADMIN_SESSION_SECRET', ['admin_session_secret', 'SESSION_SECRET']));
+      
+      // Get sanitized list of keys present on env (names only, values never exposed)
+      const detectedEnvKeys = env && typeof env === 'object' ? Object.keys(env) : [];
+
       return jsonResponse({
         status: 'healthy',
         timestamp: new Date().toISOString(),
@@ -838,6 +881,12 @@ export default {
           r2StorageConfigured: !!env.PHOTOS_BUCKET,
           d1DatabaseConfigured: !!env.DB,
           adminSecretConfigured: hasAdminPass || hasSessionSecret
+        },
+        diagnostics: {
+          hasAdminPassword: hasAdminPass,
+          hasAdminUsername: hasAdminUser,
+          hasSessionSecret: hasSessionSecret,
+          boundKeys: detectedEnvKeys
         }
       });
     }
