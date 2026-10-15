@@ -46,6 +46,9 @@ export function bytesToHex(bytes: Uint8Array): string {
 
 // Timing-safe string comparison to prevent timing attacks
 export function safeTimingCompare(a: string, b: string): boolean {
+  if (typeof a !== 'string' || typeof b !== 'string') {
+    return false;
+  }
   if (a.length !== b.length) {
     return false;
   }

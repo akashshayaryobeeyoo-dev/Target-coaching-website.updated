@@ -86,12 +86,22 @@ function getAllEnvKeys(obj: any): string[] {
   return Array.from(keys);
 }
 
+// Clean surrounding whitespace and matching enclosing quotation marks (without destroying internal quotes or punctuation)
+function cleanSecretString(val: string): string {
+  if (typeof val !== 'string') return '';
+  let str = val.trim();
+  if ((str.startsWith('"') && str.endsWith('"')) || (str.startsWith("'") && str.endsWith("'"))) {
+    str = str.slice(1, -1).trim();
+  }
+  return str;
+}
+
 // Robust async secret/env extractor supporting direct env, prototype getters, SecretsStoreSecret (.get()), cloudflare:workers, case variations, aliases, and nodejs_compat process.env
 async function resolveSecretValue(val: any): Promise<string | null> {
   if (val === undefined || val === null) return null;
   if (typeof val === 'string') {
-    const trimmed = val.replace(/['"]/g, '').trim();
-    return trimmed.length > 0 ? trimmed : null;
+    const cleaned = cleanSecretString(val);
+    return cleaned.length > 0 ? cleaned : null;
   }
   if (typeof val === 'number' || typeof val === 'boolean') {
     return String(val).trim();
@@ -101,8 +111,8 @@ async function resolveSecretValue(val: any): Promise<string | null> {
     try {
       const res = await val.get();
       if (typeof res === 'string' || typeof res === 'number') {
-        const trimmed = String(res).replace(/['"]/g, '').trim();
-        return trimmed.length > 0 ? trimmed : null;
+        const cleaned = cleanSecretString(String(res));
+        return cleaned.length > 0 ? cleaned : null;
       }
     } catch (err) {
       console.warn('Error reading secret via .get():', err);
@@ -113,17 +123,42 @@ async function resolveSecretValue(val: any): Promise<string | null> {
     try {
       const res = await val();
       if (typeof res === 'string' || typeof res === 'number') {
-        const trimmed = String(res).replace(/['"]/g, '').trim();
-        return trimmed.length > 0 ? trimmed : null;
+        const cleaned = cleanSecretString(String(res));
+        return cleaned.length > 0 ? cleaned : null;
       }
     } catch {}
   }
   // Object with value property
   if (typeof val === 'object' && typeof val.value !== 'undefined') {
-    const trimmed = String(val.value).replace(/['"]/g, '').trim();
-    return trimmed.length > 0 ? trimmed : null;
+    const cleaned = cleanSecretString(String(val.value));
+    return cleaned.length > 0 ? cleaned : null;
   }
   return null;
+}
+
+// Compare passwords timing-safely across exact, trimmed, and enclosing-unquoted representations
+function checkPasswordMatch(input: string, expected: string): boolean {
+  if (typeof input !== 'string' || typeof expected !== 'string') return false;
+  if (!input || !expected) return false;
+
+  // 1. Direct exact match
+  if (safeTimingCompare(input, expected)) return true;
+
+  // 2. Trimmed comparison (removes any accidental trailing newlines, carriage returns, or spaces)
+  const inTrim = input.trim();
+  const expTrim = expected.trim();
+  if (safeTimingCompare(inTrim, expTrim)) return true;
+
+  // 3. Enclosing quotes stripped (e.g. "password" vs password from dashboard secrets or shell wrappers)
+  const inClean = cleanSecretString(input);
+  const expClean = cleanSecretString(expected);
+  if (safeTimingCompare(inClean, expClean)) return true;
+  if (safeTimingCompare(inTrim, expClean)) return true;
+  if (safeTimingCompare(inClean, expTrim)) return true;
+  if (safeTimingCompare(input, expClean)) return true;
+  if (safeTimingCompare(inClean, expected)) return true;
+
+  return false;
 }
 
 async function getEnvSecret(env: any, primaryKey: string, aliases: string[] = []): Promise<string | null> {
@@ -326,41 +361,66 @@ export default {
         );
       }
 
-      let body: { username?: string; password?: string } = {};
+      let body: any = {};
       try {
         body = await request.json();
       } catch {
         return jsonResponse({ error: 'Invalid JSON request payload' }, 400);
       }
 
-      const { username, password } = body;
-      if (!username || !password) {
+      const rawUser = body.username ?? body.user ?? body.email ?? body.adminUser ?? body.login;
+      const rawPass = body.password ?? body.pass ?? body.adminPassword;
+      if (!rawUser || !rawPass) {
         return jsonResponse({ error: 'Username and password are required' }, 400);
       }
 
-      const inputUser = String(username).trim().toLowerCase();
-      const inputPass = String(password);
+      const inputUser = cleanSecretString(String(rawUser)).toLowerCase();
+      const inputPass = String(rawPass);
 
-      // Permitted usernames
+      // Build set of permitted usernames
       const validUsers = new Set<string>();
+
+      // Standard administrative aliases
       validUsers.add('targetadmin');
       validUsers.add('admin');
       validUsers.add('ashvani');
       validUsers.add('ashvanisir');
 
-      const configuredEnvUser = (await getEnvSecret(env, 'ADMIN_USERNAME', [
+      // Environment variable configured username
+      const configuredEnvUser = await getEnvSecret(env, 'ADMIN_USERNAME', [
         'admin_username',
         'ADMIN_USER',
         'ADMINUSERNAME'
-      ]))?.toLowerCase() || null;
+      ]);
       if (configuredEnvUser) {
-        validUsers.add(configuredEnvUser);
-        if (configuredEnvUser.includes('@')) {
-          validUsers.add(configuredEnvUser.split('@')[0]);
+        const cleanEnvUser = cleanSecretString(configuredEnvUser).toLowerCase();
+        validUsers.add(cleanEnvUser);
+        if (cleanEnvUser.includes('@')) {
+          validUsers.add(cleanEnvUser.split('@')[0]);
         }
       }
 
-      const userMatches = validUsers.has(inputUser);
+      // Check D1 database for any registered administrator usernames
+      if (env.DB) {
+        try {
+          const d1Admins = await env.DB.prepare('SELECT username FROM admin').all<{ username: string }>();
+          if (d1Admins && d1Admins.results) {
+            for (const row of d1Admins.results) {
+              if (row.username) {
+                const u = cleanSecretString(row.username).toLowerCase();
+                validUsers.add(u);
+                if (u.includes('@')) {
+                  validUsers.add(u.split('@')[0]);
+                }
+              }
+            }
+          }
+        } catch (dbErr) {
+          console.warn('D1 admin list lookup error:', dbErr);
+        }
+      }
+
+      const userMatches = validUsers.has(inputUser) || (configuredEnvUser ? inputUser === cleanSecretString(configuredEnvUser).toLowerCase() : false);
 
       // Validate password
       let passwordMatches = false;
@@ -371,17 +431,20 @@ export default {
         'ADMIN_SECRET'
       ]);
 
-      // Check against D1 admin table if configured
+      // 1. Check against D1 admin table if configured
       if (env.DB) {
         try {
           const row = await env.DB.prepare(
-            'SELECT password_hash, salt FROM admin WHERE username = ?'
-          ).bind(inputUser).first<{ password_hash: string; salt: string }>();
+            'SELECT password_hash, salt FROM admin WHERE LOWER(username) = LOWER(?) OR username = ?'
+          ).bind(inputUser, inputUser).first<{ password_hash: string; salt: string }>();
 
           if (row && row.password_hash && row.salt) {
-            const computedHash = await hashPassword(inputPass, row.salt);
-            if (safeTimingCompare(computedHash, row.password_hash)) {
-              passwordMatches = true;
+            for (const candidate of [inputPass, inputPass.trim(), cleanSecretString(inputPass)]) {
+              const computedHash = await hashPassword(candidate, row.salt);
+              if (safeTimingCompare(computedHash, row.password_hash)) {
+                passwordMatches = true;
+                break;
+              }
             }
           }
         } catch (dbErr) {
@@ -389,10 +452,23 @@ export default {
         }
       }
 
-      // Check against environment secret
+      // 2. Check against environment secret
       if (!passwordMatches && configuredEnvPass) {
-        if (safeTimingCompare(inputPass, configuredEnvPass)) {
+        if (checkPasswordMatch(inputPass, configuredEnvPass)) {
           passwordMatches = true;
+
+          // Sync verified credentials to D1 so subsequent logins can also use D1
+          if (env.DB) {
+            try {
+              const salt = generateSalt();
+              const newHash = await hashPassword(cleanSecretString(inputPass), salt);
+              await env.DB.prepare(
+                'INSERT OR REPLACE INTO admin (id, username, password_hash, salt, updated_at) VALUES (?, ?, ?, ?, datetime("now"))'
+              ).bind('primary_admin', inputUser, newHash, salt).run();
+            } catch (syncErr) {
+              console.warn('D1 admin credentials sync error:', syncErr);
+            }
+          }
         }
       }
 
