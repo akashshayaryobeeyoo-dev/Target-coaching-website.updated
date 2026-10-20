@@ -417,6 +417,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     ];
   });
 
+  // Sync test attempts from backend D1 database on mount
+  useEffect(() => {
+    fetch('/api/tests/attempts?limit=30')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((remoteAttempts) => {
+        if (Array.isArray(remoteAttempts) && remoteAttempts.length > 0) {
+          setTestResults((prev) => {
+            const existingIds = new Set(prev.map((p) => p.id).filter(Boolean));
+            const newItems: TestResult[] = [];
+            for (const item of remoteAttempts) {
+              if (item.id && !existingIds.has(item.id)) {
+                newItems.push({
+                  id: item.id,
+                  testId: item.testId,
+                  testTitle: item.testTitle,
+                  date: item.createdAt
+                    ? new Date(item.createdAt).toLocaleDateString('en-IN', {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric'
+                      })
+                    : 'Recent',
+                  language: item.language || 'hi',
+                  score: Number(item.score) || 0,
+                  totalMarks: Number(item.totalMarks) || 0,
+                  correctCount: Number(item.correctCount) || 0,
+                  incorrectCount: Number(item.incorrectCount) || 0,
+                  unattemptedCount: Number(item.unattemptedCount) || 0,
+                  timeSpentSeconds: Number(item.timeSpentSeconds) || 0,
+                  userAnswers: item.userAnswers || {},
+                  candidateRoll: item.candidateRoll
+                });
+              }
+            }
+            return newItems.length > 0 ? [...newItems, ...prev] : prev;
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   // Inquiries
   const [inquiries, setInquiries] = useState<AdmissionInquiry[]>(() => {
     const saved = localStorage.getItem('target_inquiries');
@@ -516,7 +557,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const saveTestResult = (result: TestResult) => {
-    setTestResults(prev => [result, ...prev]);
+    const attemptId = result.id || `att-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const fullResult: TestResult = {
+      ...result,
+      id: attemptId
+    };
+
+    // Optimistically update React state and localStorage
+    setTestResults(prev => {
+      const filtered = prev.filter(r => r.id !== attemptId);
+      return [fullResult, ...filtered];
+    });
+
+    // Asynchronously persist to backend D1 database (or local server in dev)
+    fetch('/api/tests/submit', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        id: attemptId,
+        testId: fullResult.testId,
+        testTitle: fullResult.testTitle,
+        language: fullResult.language,
+        score: fullResult.score,
+        totalMarks: fullResult.totalMarks,
+        correctCount: fullResult.correctCount,
+        incorrectCount: fullResult.incorrectCount,
+        unattemptedCount: fullResult.unattemptedCount,
+        timeSpentSeconds: fullResult.timeSpentSeconds,
+        userAnswers: fullResult.userAnswers,
+        candidateRoll: fullResult.candidateRoll || 'TARGET-CBT-2026'
+      })
+    })
+      .then(res => res.json() as Promise<{ success?: boolean } | null>)
+      .then(data => {
+        if (data && data.success) {
+          // Successfully saved to D1 / backend
+        }
+      })
+      .catch(err => {
+        console.warn('Persistent storage sync note:', err);
+      });
   };
 
   const submitInquiry = async (inq: Omit<AdmissionInquiry, 'id' | 'createdAt' | 'status'>) => {

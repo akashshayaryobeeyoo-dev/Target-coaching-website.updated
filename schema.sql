@@ -54,3 +54,40 @@ CREATE TABLE IF NOT EXISTS announcements (
   isImportant INTEGER DEFAULT 0,
   active INTEGER DEFAULT 1
 );
+
+-- 5. Mock Test Attempts & Persistent CBT Submissions
+CREATE TABLE IF NOT EXISTS test_attempts (
+  id TEXT PRIMARY KEY,
+  testId TEXT NOT NULL,
+  testTitle TEXT NOT NULL,
+  language TEXT NOT NULL DEFAULT 'hi',
+  score REAL NOT NULL,
+  totalMarks REAL NOT NULL,
+  correctCount INTEGER NOT NULL,
+  incorrectCount INTEGER NOT NULL,
+  unattemptedCount INTEGER NOT NULL,
+  timeSpentSeconds INTEGER NOT NULL,
+  userAnswers TEXT NOT NULL,
+  candidateRoll TEXT,
+  status TEXT DEFAULT 'completed',
+  createdAt TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_test_attempts_testId ON test_attempts(testId);
+CREATE INDEX IF NOT EXISTS idx_test_attempts_createdAt ON test_attempts(createdAt);
+
+-- 6. Granular Submitted Question Answers (for Sectional & Question-level Analytics)
+CREATE TABLE IF NOT EXISTS test_answers (
+  id TEXT PRIMARY KEY,
+  attemptId TEXT NOT NULL,
+  questionId TEXT NOT NULL,
+  selectedOption INTEGER,
+  isCorrect INTEGER NOT NULL DEFAULT 0,
+  marksAwarded REAL NOT NULL DEFAULT 0.0,
+  createdAt TEXT NOT NULL,
+  FOREIGN KEY (attemptId) REFERENCES test_attempts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_test_answers_attemptId ON test_answers(attemptId);
+CREATE INDEX IF NOT EXISTS idx_test_answers_questionId ON test_answers(questionId);
+

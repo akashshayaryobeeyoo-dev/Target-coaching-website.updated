@@ -46,6 +46,7 @@ const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const INQUIRIES_FILE = path.join(DATA_DIR, 'inquiries.json');
 const ANNOUNCEMENTS_FILE = path.join(DATA_DIR, 'announcements.json');
 const ADMIN_FILE = path.join(DATA_DIR, 'admin.json');
+const TEST_ATTEMPTS_FILE = path.join(DATA_DIR, 'test_attempts.json');
 
 function readJsonFile<T>(filePath: string, defaultValue: T): T {
   try {
@@ -618,6 +619,117 @@ app.put('/api/center-info', requireAdminAuth, (req: Request, res: Response) => {
   writeJsonFile(CENTER_INFO_FILE, merged);
   res.json({ success: true, centerInfo: merged });
 });
+
+// ==================== MOCK TEST PERSISTENT STORAGE ====================
+
+// POST /api/tests/submit
+app.post('/api/tests/submit', (req: Request, res: Response) => {
+  const {
+    id,
+    testId,
+    testTitle,
+    language,
+    score,
+    totalMarks,
+    correctCount,
+    incorrectCount,
+    unattemptedCount,
+    timeSpentSeconds,
+    userAnswers,
+    candidateRoll
+  } = req.body;
+
+  if (!testId || typeof testId !== 'string' || testId.trim().length === 0) {
+    res.status(400).json({ error: 'Missing or invalid testId' });
+    return;
+  }
+  if (typeof score !== 'number' || isNaN(score)) {
+    res.status(400).json({ error: 'Missing or invalid score' });
+    return;
+  }
+  if (typeof totalMarks !== 'number' || isNaN(totalMarks) || totalMarks <= 0) {
+    res.status(400).json({ error: 'Missing or invalid totalMarks' });
+    return;
+  }
+
+  const attemptId = (typeof id === 'string' && id.trim().length > 0)
+    ? id.trim()
+    : 'att-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
+
+  const createdAt = new Date().toISOString();
+  const answersMap = (userAnswers && typeof userAnswers === 'object' && !Array.isArray(userAnswers))
+    ? userAnswers
+    : {};
+
+  const newAttempt = {
+    id: attemptId,
+    testId: testId.trim(),
+    testTitle: (typeof testTitle === 'string' && testTitle.trim().length > 0) ? testTitle.trim() : testId,
+    language: language === 'hi' ? 'hi' : 'en',
+    score,
+    totalMarks,
+    correctCount: Math.max(0, Number(correctCount) || 0),
+    incorrectCount: Math.max(0, Number(incorrectCount) || 0),
+    unattemptedCount: Math.max(0, Number(unattemptedCount) || 0),
+    timeSpentSeconds: Math.max(0, Number(timeSpentSeconds) || 0),
+    userAnswers: answersMap,
+    candidateRoll: (typeof candidateRoll === 'string' && candidateRoll.trim().length > 0) ? candidateRoll.trim() : 'TARGET-CBT-2026',
+    status: 'completed',
+    createdAt
+  };
+
+  const attempts = readJsonFile<any[]>(TEST_ATTEMPTS_FILE, []);
+  // Prevent duplicate submissions by ID
+  const existingIdx = attempts.findIndex(a => a.id === attemptId);
+  if (existingIdx !== -1) {
+    attempts[existingIdx] = newAttempt;
+  } else {
+    attempts.unshift(newAttempt);
+  }
+
+  writeJsonFile(TEST_ATTEMPTS_FILE, attempts);
+
+  res.status(201).json({
+    success: true,
+    attemptId,
+    message: 'Mock test result and answers saved successfully',
+    persistedToD1: false
+  });
+});
+
+// GET /api/tests/attempts
+app.get('/api/tests/attempts', (req: Request, res: Response) => {
+  const { testId, limit } = req.query;
+  const attempts = readJsonFile<any[]>(TEST_ATTEMPTS_FILE, []);
+  let filtered = attempts;
+  if (testId && typeof testId === 'string') {
+    filtered = filtered.filter(a => a.testId === testId);
+  }
+  const max = Math.min(100, Math.max(1, Number(limit) || 30));
+  res.json(filtered.slice(0, max));
+});
+
+// GET /api/tests/attempts/:id
+app.get('/api/tests/attempts/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const attempts = readJsonFile<any[]>(TEST_ATTEMPTS_FILE, []);
+  const attempt = attempts.find(a => a.id === id);
+  if (!attempt) {
+    res.status(404).json({ error: 'Test attempt not found' });
+    return;
+  }
+  res.json(attempt);
+});
+
+// DELETE /api/tests/attempts/:id (Admin only)
+app.delete('/api/tests/attempts/:id', requireAdminAuth, (req: Request, res: Response) => {
+  const { id } = req.params;
+  const attempts = readJsonFile<any[]>(TEST_ATTEMPTS_FILE, []);
+  const filtered = attempts.filter(a => a.id !== id);
+  writeJsonFile(TEST_ATTEMPTS_FILE, filtered);
+  res.json({ success: true, message: 'Test attempt deleted' });
+});
+
 
 // ==================== VITE & STATIC HANDLING ====================
 

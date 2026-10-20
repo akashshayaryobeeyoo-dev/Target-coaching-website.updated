@@ -11,13 +11,8 @@ not_found_handling = "single-page-application"
 [vars]
 ADMIN_USERNAME = "targetadmin"
 
-# Free-Tier Configuration (100% Free - No Credit Card Required):
-# 1. R2 bucket removed because R2 requires a payment method on file.
-#    Ashvani Sir's official photograph is served as a zero-cost static asset (/ashvani-sir.png).
-# 2. Cloudflare D1 Database is 100% free with no credit card required.
-#    Bind in Cloudflare Dashboard: Settings -> Bindings -> Add -> D1 database (Variable: DB)
-#    OR uncomment the block below with your actual D1 Database ID:
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "target_coaching_db"
-# database_id = "<YOUR_D1_DATABASE_UUID>"
+[[d1_databases]]
+binding = "DB"
+database_name = "target-coaching-db"
+database_id = "target-coaching-db"
+

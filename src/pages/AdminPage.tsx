@@ -26,7 +26,9 @@ import {
   Filter, 
   Award,
   Sparkles,
-  ExternalLink
+  ExternalLink,
+  Database,
+  GraduationCap
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { AdmissionInquiry } from '../types';
@@ -54,7 +56,13 @@ export const AdminPage: React.FC = () => {
   } = useApp();
 
   // Active Tab
-  const [activeTab, setActiveTab] = useState<'photo' | 'leads' | 'announcements' | 'settings' | 'security'>('photo');
+  const [activeTab, setActiveTab] = useState<'photo' | 'leads' | 'announcements' | 'settings' | 'security' | 'cbt-attempts'>('photo');
+
+  // Mock Test Attempts (Persistent D1 Submissions) State
+  const [testAttempts, setTestAttempts] = useState<any[]>([]);
+  const [attemptsLoading, setAttemptsLoading] = useState(false);
+  const [selectedAttemptDetail, setSelectedAttemptDetail] = useState<any | null>(null);
+  const [attemptSearch, setAttemptSearch] = useState('');
 
   // Login Form State
   const [usernameInput, setUsernameInput] = useState('');
@@ -138,6 +146,50 @@ export const AdminPage: React.FC = () => {
       setLoginLoading(false);
     }
   };
+
+  // Fetch Mock Test Attempts from backend D1
+  const fetchTestAttempts = async () => {
+    setAttemptsLoading(true);
+    try {
+      const res = await fetch('/api/tests/attempts?limit=50');
+      if (res.ok) {
+        const data = await res.json();
+        setTestAttempts(Array.isArray(data) ? data : []);
+      }
+    } catch (err) {
+      console.error('Failed to load test attempts:', err);
+    } finally {
+      setAttemptsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isAdminLoggedIn && activeTab === 'cbt-attempts') {
+      fetchTestAttempts();
+    }
+  }, [isAdminLoggedIn, activeTab]);
+
+  const handleDeleteAttempt = async (id: string) => {
+    if (!window.confirm('Delete this CBT test submission record?')) return;
+    try {
+      const res = await fetch(`/api/tests/attempts/${id}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${adminToken}`
+        }
+      });
+      if (res.ok) {
+        setTestAttempts(prev => prev.filter(a => a.id !== id));
+        if (selectedAttemptDetail && selectedAttemptDetail.id === id) {
+          setSelectedAttemptDetail(null);
+        }
+        showToast('Test attempt deleted.');
+      }
+    } catch {
+      showToast('Failed to delete attempt.');
+    }
+  };
+
 
   // Handle Photo Selection with Validation
   const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -549,6 +601,23 @@ export const AdminPage: React.FC = () => {
           >
             <Clock className="w-4 h-4 text-emerald-400" />
             <span>Batch Timings & Fees</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('cbt-attempts')}
+            className={`px-4 py-3 text-xs font-bold border-b-2 flex items-center space-x-2 whitespace-nowrap transition ${
+              activeTab === 'cbt-attempts'
+                ? 'border-orange-500 text-orange-400 bg-slate-800/50'
+                : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/20'
+            }`}
+          >
+            <GraduationCap className="w-4 h-4 text-emerald-400" />
+            <span>Mock Test Submissions (D1)</span>
+            {testAttempts.length > 0 && (
+              <span className="w-4 h-4 rounded-full bg-emerald-600 text-white text-[10px] font-black flex items-center justify-center">
+                {testAttempts.length}
+              </span>
+            )}
           </button>
 
           <button
@@ -1352,6 +1421,254 @@ export const AdminPage: React.FC = () => {
                 <p>
                   Passwords are cryptographic hashes salted with PBKDF2 (SHA-512). Passwords are never sent or stored in frontend bundles or client logs.
                 </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================= TAB: CBT MOCK TEST ATTEMPTS (D1) ================= */}
+        {activeTab === 'cbt-attempts' && (
+          <div className="space-y-6">
+            <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-sm space-y-6">
+              
+              {/* Header & Actions */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-100">
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <span className="p-1.5 rounded-lg bg-emerald-50 text-emerald-700">
+                      <Database className="w-5 h-5" />
+                    </span>
+                    <h2 className="text-xl font-black text-slate-900">
+                      Mock Test Submissions (Cloudflare D1)
+                    </h2>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Persistent student test attempts, scores, and answer sheets stored securely in Cloudflare D1.
+                  </p>
+                </div>
+
+                <div className="flex items-center space-x-3">
+                  <button
+                    onClick={fetchTestAttempts}
+                    disabled={attemptsLoading}
+                    className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition flex items-center space-x-2 disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${attemptsLoading ? 'animate-spin' : ''}`} />
+                    <span>Refresh D1 Records</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Stats overview */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Total Submissions</span>
+                  <div className="text-2xl font-black text-slate-900 mt-1">{testAttempts.length}</div>
+                </div>
+                <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200">
+                  <span className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider block">Average Score</span>
+                  <div className="text-2xl font-black text-emerald-700 mt-1">
+                    {testAttempts.length > 0
+                      ? (testAttempts.reduce((acc, a) => acc + (Number(a.score) || 0), 0) / testAttempts.length).toFixed(1)
+                      : '0.0'}
+                  </div>
+                </div>
+                <div className="p-4 rounded-2xl bg-blue-50 border border-blue-200">
+                  <span className="text-[11px] font-bold text-blue-800 uppercase tracking-wider block">Avg Questions Solved</span>
+                  <div className="text-2xl font-black text-blue-900 mt-1">
+                    {testAttempts.length > 0
+                      ? Math.round(testAttempts.reduce((acc, a) => acc + (Number(a.correctCount) || 0), 0) / testAttempts.length)
+                      : 0}
+                  </div>
+                </div>
+                <div className="p-4 rounded-2xl bg-purple-50 border border-purple-200">
+                  <span className="text-[11px] font-bold text-purple-800 uppercase tracking-wider block">Active Database</span>
+                  <div className="text-xs font-mono font-bold text-purple-900 mt-2 truncate">
+                    target-coaching-db
+                  </div>
+                </div>
+              </div>
+
+              {/* Search filter */}
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
+                <input
+                  type="text"
+                  value={attemptSearch}
+                  onChange={(e) => setAttemptSearch(e.target.value)}
+                  placeholder="Filter by test title, test ID, or candidate roll number..."
+                  className="w-full pl-10 pr-4 py-2.5 text-xs rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-orange-500 transition"
+                />
+              </div>
+
+              {/* Table of Attempts */}
+              {attemptsLoading && testAttempts.length === 0 ? (
+                <div className="p-12 text-center space-y-3">
+                  <RefreshCw className="w-6 h-6 animate-spin text-orange-500 mx-auto" />
+                  <p className="text-xs text-slate-500">Loading mock test attempts from Cloudflare D1...</p>
+                </div>
+              ) : testAttempts.length === 0 ? (
+                <div className="p-12 text-center rounded-2xl border border-dashed border-slate-200 space-y-3">
+                  <GraduationCap className="w-10 h-10 text-slate-300 mx-auto" />
+                  <div className="text-sm font-bold text-slate-700">No Mock Test Submissions Yet</div>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    When students take a CBT mock test on the website, their scores, answers, and timestamps are automatically saved to Cloudflare D1 and will appear here.
+                  </p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold">
+                        <th className="py-3 px-4">Candidate Roll</th>
+                        <th className="py-3 px-4">Test Title</th>
+                        <th className="py-3 px-4">Medium</th>
+                        <th className="py-3 px-4">Score</th>
+                        <th className="py-3 px-4">Breakdown (C / I / S)</th>
+                        <th className="py-3 px-4">Time Taken</th>
+                        <th className="py-3 px-4">Submitted At</th>
+                        <th className="py-3 px-4 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {testAttempts
+                        .filter(a => {
+                          if (!attemptSearch) return true;
+                          const q = attemptSearch.toLowerCase();
+                          return (
+                            (a.testTitle && a.testTitle.toLowerCase().includes(q)) ||
+                            (a.testId && a.testId.toLowerCase().includes(q)) ||
+                            (a.candidateRoll && a.candidateRoll.toLowerCase().includes(q))
+                          );
+                        })
+                        .map((attempt) => {
+                          const dateStr = attempt.createdAt
+                            ? new Date(attempt.createdAt).toLocaleString('en-IN', {
+                                day: '2-digit',
+                                month: 'short',
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })
+                            : '—';
+
+                          return (
+                            <tr key={attempt.id} className="hover:bg-slate-50/80 transition">
+                              <td className="py-3.5 px-4 font-mono font-bold text-slate-800">
+                                {attempt.candidateRoll || 'TARGET-CBT-2026'}
+                              </td>
+                              <td className="py-3.5 px-4 font-bold text-slate-900 max-w-[220px] truncate" title={attempt.testTitle}>
+                                {attempt.testTitle || attempt.testId}
+                              </td>
+                              <td className="py-3.5 px-4">
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                  attempt.language === 'en'
+                                    ? 'bg-blue-100 text-blue-800'
+                                    : 'bg-emerald-100 text-emerald-800'
+                                }`}>
+                                  {attempt.language === 'en' ? 'English' : 'Hindi'}
+                                </span>
+                              </td>
+                              <td className="py-3.5 px-4 font-black text-emerald-600">
+                                {attempt.score} <span className="text-slate-400 font-normal">/ {attempt.totalMarks}</span>
+                              </td>
+                              <td className="py-3.5 px-4">
+                                <div className="flex items-center space-x-1.5 text-[11px] font-mono">
+                                  <span className="text-emerald-700 font-bold" title="Correct">+{attempt.correctCount}</span>
+                                  <span className="text-slate-300">/</span>
+                                  <span className="text-rose-600 font-bold" title="Incorrect">-{attempt.incorrectCount}</span>
+                                  <span className="text-slate-300">/</span>
+                                  <span className="text-slate-500 font-medium" title="Skipped">{attempt.unattemptedCount}</span>
+                                </div>
+                              </td>
+                              <td className="py-3.5 px-4 text-slate-600">
+                                {Math.floor((attempt.timeSpentSeconds || 0) / 60)}m {(attempt.timeSpentSeconds || 0) % 60}s
+                              </td>
+                              <td className="py-3.5 px-4 text-slate-500 text-[11px]">
+                                {dateStr}
+                              </td>
+                              <td className="py-3.5 px-4 text-right">
+                                <div className="flex items-center justify-end space-x-2">
+                                  <button
+                                    onClick={() => setSelectedAttemptDetail(attempt)}
+                                    className="p-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 transition"
+                                    title="View Answer Sheet"
+                                  >
+                                    <Eye className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteAttempt(attempt.id)}
+                                    className="p-1.5 rounded-lg bg-rose-50 text-rose-700 hover:bg-rose-100 transition"
+                                    title="Delete Attempt"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+            </div>
+          </div>
+        )}
+
+        {/* Answer Sheet Inspection Modal */}
+        {selectedAttemptDetail && (
+          <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="bg-white rounded-3xl max-w-2xl w-full p-6 sm:p-7 shadow-2xl border border-slate-200 space-y-4 max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div>
+                  <h3 className="text-base font-black text-slate-900">
+                    CBT Submission Answer Sheet
+                  </h3>
+                  <div className="text-xs text-slate-500">
+                    {selectedAttemptDetail.testTitle} • {selectedAttemptDetail.candidateRoll || 'TARGET-CBT-2026'}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedAttemptDetail(null)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Stats pill */}
+              <div className="grid grid-cols-3 gap-2 p-3 bg-slate-50 rounded-2xl text-xs text-center">
+                <div>
+                  <span className="text-slate-500 block text-[10px]">Score</span>
+                  <strong className="text-emerald-700 text-base">{selectedAttemptDetail.score} / {selectedAttemptDetail.totalMarks}</strong>
+                </div>
+                <div>
+                  <span className="text-slate-500 block text-[10px]">Correct / Incorrect</span>
+                  <strong className="text-slate-800 text-sm">+{selectedAttemptDetail.correctCount} / -{selectedAttemptDetail.incorrectCount}</strong>
+                </div>
+                <div>
+                  <span className="text-slate-500 block text-[10px]">Time Taken</span>
+                  <strong className="text-slate-800 text-sm">{Math.floor((selectedAttemptDetail.timeSpentSeconds || 0) / 60)}m {(selectedAttemptDetail.timeSpentSeconds || 0) % 60}s</strong>
+                </div>
+              </div>
+
+              {/* Submitted Answers JSON inspection */}
+              <div className="space-y-2">
+                <div className="text-xs font-bold text-slate-700">Student Submitted Choices:</div>
+                <div className="p-3 bg-slate-900 text-emerald-400 font-mono text-xs rounded-xl overflow-x-auto max-h-60">
+                  <pre>{JSON.stringify(selectedAttemptDetail.userAnswers || {}, null, 2)}</pre>
+                </div>
+              </div>
+
+              <div className="pt-2 text-right">
+                <button
+                  onClick={() => setSelectedAttemptDetail(null)}
+                  className="px-5 py-2.5 rounded-xl bg-slate-900 text-white font-bold text-xs"
+                >
+                  Close
+                </button>
               </div>
             </div>
           </div>

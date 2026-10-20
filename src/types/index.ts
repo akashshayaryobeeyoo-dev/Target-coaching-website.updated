@@ -117,13 +117,26 @@ export interface MockTest {
   examId?: ExamId;
   durationMinutes: number;
   totalMarks: number;
-  negativeMarking: number; // e.g. 0.25 or 0.5
+  marksPerQuestion?: number;
+  negativeMarking: number; // e.g. 0.50, 0.33, 0.25, 1.0, 0
   questions: Question[];
+  officialTotalQuestions?: number;
+  officialDurationMinutes?: number;
+  sessionName?: string;
+  sessionNameHindi?: string;
   instructions: string[];
   instructionsHindi?: string[];
+  sectionBreakdown?: {
+    sectionName: string;
+    sectionNameHindi?: string;
+    officialQuestions: number;
+    availableQuestions: number;
+    marksPerQuestion: number;
+  }[];
 }
 
 export interface TestResult {
+  id?: string;
   testId: string;
   testTitle: string;
   date: string;
@@ -135,6 +148,7 @@ export interface TestResult {
   unattemptedCount: number;
   timeSpentSeconds: number;
   userAnswers: Record<string, number>; // questionId -> selectedOptionIndex
+  candidateRoll?: string;
 }
 
 export interface AdmissionInquiry {

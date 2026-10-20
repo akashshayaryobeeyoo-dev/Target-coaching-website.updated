@@ -939,13 +939,238 @@ export default {
     }
 
     // ==========================================
-    // 6. HEALTH & CLOUDFLARE STATUS CHECK
+    // 6. MOCK TEST PERSISTENT STORAGE (CLOUDFLARE D1)
+    // ==========================================
+
+    // POST /api/tests/submit (Save test attempt and submitted answers to D1)
+    if (request.method === 'POST' && path === '/api/tests/submit') {
+      let body: any = {};
+      try {
+        body = await request.json();
+      } catch {
+        return jsonResponse({ error: 'Invalid JSON request payload' }, 400);
+      }
+
+      const {
+        testId,
+        testTitle,
+        language,
+        score,
+        totalMarks,
+        correctCount,
+        incorrectCount,
+        unattemptedCount,
+        timeSpentSeconds,
+        userAnswers,
+        candidateRoll
+      } = body;
+
+      // Input Validation
+      if (!testId || typeof testId !== 'string' || testId.trim().length === 0) {
+        return jsonResponse({ error: 'Missing or invalid testId' }, 400);
+      }
+      if (typeof score !== 'number' || isNaN(score)) {
+        return jsonResponse({ error: 'Missing or invalid score value' }, 400);
+      }
+      if (typeof totalMarks !== 'number' || isNaN(totalMarks) || totalMarks <= 0) {
+        return jsonResponse({ error: 'Missing or invalid totalMarks value' }, 400);
+      }
+
+      const attemptId = (body.id && typeof body.id === 'string' && body.id.trim().length > 0)
+        ? body.id.trim()
+        : 'att-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
+
+      const createdAt = new Date().toISOString();
+      const answersMap = (userAnswers && typeof userAnswers === 'object' && !Array.isArray(userAnswers))
+        ? userAnswers
+        : {};
+      const answersJson = JSON.stringify(answersMap);
+      const cleanLang = language === 'hi' ? 'hi' : 'en';
+      const cleanTitle = (typeof testTitle === 'string' && testTitle.trim().length > 0) ? testTitle.trim() : testId;
+      const cleanRoll = (typeof candidateRoll === 'string' && candidateRoll.trim().length > 0)
+        ? candidateRoll.trim()
+        : 'TARGET-CBT-2026';
+
+      if (env.DB) {
+        try {
+          // 1. Insert or ignore attempt into test_attempts table (prevents duplicate submission)
+          await env.DB.prepare(
+            `INSERT OR REPLACE INTO test_attempts (
+              id, testId, testTitle, language, score, totalMarks,
+              correctCount, incorrectCount, unattemptedCount, timeSpentSeconds,
+              userAnswers, candidateRoll, status, createdAt
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            attemptId,
+            testId.trim(),
+            cleanTitle,
+            cleanLang,
+            score,
+            totalMarks,
+            Math.max(0, Number(correctCount) || 0),
+            Math.max(0, Number(incorrectCount) || 0),
+            Math.max(0, Number(unattemptedCount) || 0),
+            Math.max(0, Number(timeSpentSeconds) || 0),
+            answersJson,
+            cleanRoll,
+            'completed',
+            createdAt
+          ).run();
+
+          // 2. Insert granular answers into test_answers table
+          const entries = Object.entries(answersMap);
+          if (entries.length > 0) {
+            const stmts = entries.map(([qId, optIdx], idx) => {
+              const ansId = `${attemptId}-q-${idx}`;
+              return env.DB!.prepare(
+                `INSERT OR REPLACE INTO test_answers (
+                  id, attemptId, questionId, selectedOption, isCorrect, marksAwarded, createdAt
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+              ).bind(
+                ansId,
+                attemptId,
+                String(qId),
+                typeof optIdx === 'number' ? optIdx : null,
+                0,
+                0.0,
+                createdAt
+              );
+            });
+
+            try {
+              await env.DB.batch(stmts);
+            } catch (batchErr) {
+              console.warn('D1 test_answers batch insert warning:', batchErr);
+            }
+          }
+        } catch (dbErr: any) {
+          console.error('D1 test_attempts save error:', dbErr);
+          return jsonResponse({
+            error: 'Failed to persist test attempt to Cloudflare D1',
+            details: dbErr?.message || String(dbErr)
+          }, 500);
+        }
+      }
+
+      return jsonResponse({
+        success: true,
+        attemptId,
+        message: 'Mock test result and answers saved successfully to database.',
+        persistedToD1: !!env.DB
+      }, 201);
+    }
+
+    // GET /api/tests/attempts (Fetch recent test attempts from D1)
+    if (request.method === 'GET' && path === '/api/tests/attempts') {
+      const testIdFilter = url.searchParams.get('testId');
+      const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 30));
+
+      if (env.DB) {
+        try {
+          let query = 'SELECT * FROM test_attempts';
+          const params: any[] = [];
+          if (testIdFilter) {
+            query += ' WHERE testId = ?';
+            params.push(testIdFilter);
+          }
+          query += ' ORDER BY createdAt DESC LIMIT ?';
+          params.push(limit);
+
+          const result = await env.DB.prepare(query).bind(...params).all<any>();
+          const attempts = (result.results || []).map((row: any) => {
+            let parsedAnswers = {};
+            try {
+              parsedAnswers = typeof row.userAnswers === 'string' ? JSON.parse(row.userAnswers) : row.userAnswers;
+            } catch {}
+            return {
+              ...row,
+              userAnswers: parsedAnswers
+            };
+          });
+          return jsonResponse(attempts);
+        } catch (dbErr: any) {
+          console.warn('D1 test_attempts query error:', dbErr);
+          return jsonResponse([]);
+        }
+      }
+
+      return jsonResponse([]);
+    }
+
+    // GET /api/tests/attempts/:id (Fetch single attempt with answers)
+    if (request.method === 'GET' && path.startsWith('/api/tests/attempts/')) {
+      const attemptId = path.replace('/api/tests/attempts/', '');
+      if (env.DB) {
+        try {
+          const attempt = await env.DB.prepare(
+            'SELECT * FROM test_attempts WHERE id = ?'
+          ).bind(attemptId).first<any>();
+
+          if (!attempt) {
+            return jsonResponse({ error: 'Test attempt not found' }, 404);
+          }
+
+          let parsedAnswers = {};
+          try {
+            parsedAnswers = typeof attempt.userAnswers === 'string' ? JSON.parse(attempt.userAnswers) : attempt.userAnswers;
+          } catch {}
+
+          const answersRes = await env.DB.prepare(
+            'SELECT * FROM test_answers WHERE attemptId = ?'
+          ).bind(attemptId).all<any>();
+
+          return jsonResponse({
+            ...attempt,
+            userAnswers: parsedAnswers,
+            answers: answersRes.results || []
+          });
+        } catch (dbErr) {
+          console.warn('D1 single attempt query error:', dbErr);
+          return jsonResponse({ error: 'Failed to retrieve test attempt' }, 500);
+        }
+      }
+
+      return jsonResponse({ error: 'Database not bound' }, 404);
+    }
+
+    // DELETE /api/tests/attempts/:id (Admin only: Delete test attempt)
+    if (request.method === 'DELETE' && path.startsWith('/api/tests/attempts/')) {
+      const auth = await authenticateRequest(request, env);
+      if (!auth.authorized) {
+        return jsonResponse({ error: 'Unauthorized: Admin authentication required' }, 401);
+      }
+
+      const attemptId = path.replace('/api/tests/attempts/', '');
+      if (env.DB) {
+        try {
+          await env.DB.prepare('DELETE FROM test_answers WHERE attemptId = ?').bind(attemptId).run();
+          await env.DB.prepare('DELETE FROM test_attempts WHERE id = ?').bind(attemptId).run();
+        } catch (dbErr) {
+          console.warn('D1 delete attempt error:', dbErr);
+        }
+      }
+
+      return jsonResponse({ success: true, message: 'Test attempt deleted' });
+    }
+
+    // ==========================================
+    // 7. HEALTH & CLOUDFLARE STATUS CHECK
     // ==========================================
     if (request.method === 'GET' && path === '/api/health') {
       const hasAdminPass = !!(await getEnvSecret(env, 'ADMIN_PASSWORD', ['admin_password', 'ADMIN_PASS', 'ADMINPASSWORD', 'ADMIN_SECRET']));
       const hasAdminUser = !!(await getEnvSecret(env, 'ADMIN_USERNAME', ['admin_username', 'ADMIN_USER', 'ADMINUSERNAME']));
       const hasSessionSecret = !!(await getEnvSecret(env, 'ADMIN_SESSION_SECRET', ['admin_session_secret', 'SESSION_SECRET']));
       
+      let d1TestTableExists = false;
+      if (env.DB) {
+        try {
+          const tableRow = await env.DB.prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='test_attempts'"
+          ).first();
+          d1TestTableExists = !!tableRow;
+        } catch {}
+      }
+
       // Get sanitized list of keys present on env (names only, values never exposed)
       const detectedEnvKeys = env && typeof env === 'object' ? Object.keys(env) : [];
 
@@ -956,12 +1181,14 @@ export default {
         bindings: {
           r2StorageConfigured: !!env.PHOTOS_BUCKET,
           d1DatabaseConfigured: !!env.DB,
+          d1TestTableReady: d1TestTableExists,
           adminSecretConfigured: hasAdminPass || hasSessionSecret
         },
         diagnostics: {
           hasAdminPassword: hasAdminPass,
           hasAdminUsername: hasAdminUser,
           hasSessionSecret: hasSessionSecret,
+          d1TestTableExists,
           boundKeys: detectedEnvKeys
         }
       });

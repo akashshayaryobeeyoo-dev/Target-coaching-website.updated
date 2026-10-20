@@ -12,7 +12,8 @@
     "lint": "tsc --noEmit",
     "deploy:worker": "wrangler deploy",
     "deploy:pages": "vite build && wrangler pages deploy dist",
-    "d1:migrate": "wrangler d1 execute target_coaching_db --file=./schema.sql"
+    "d1:migrate": "wrangler d1 execute target-coaching-db --remote --file=./schema.sql",
+    "d1:migrate:local": "wrangler d1 execute target-coaching-db --local --file=./schema.sql"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

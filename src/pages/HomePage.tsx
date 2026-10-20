@@ -92,7 +92,7 @@ export const HomePage: React.FC = () => {
 
               {/* Subtitle */}
               <p className="text-base sm:text-lg text-slate-300 max-w-2xl font-normal leading-relaxed">
-                Premier coaching for <strong className="text-white font-semibold">SSC CGL, CHSL, MTS, GD, Railway NTPC, Group D, UP Police, UPSSSC PET & Army Agniveer</strong>. 
+                Premium Coaching for <strong className="text-white font-semibold">SSC CGL, CHSL, MTS, GD, Railway NTPC, Group D, UP Police, UPSSSC PET & Army Agniveer</strong>. 
                 Complete syllabus from Basic to Advanced with conceptual depth, high-speed calculation tricks, and weekly test series.
               </p>
 
