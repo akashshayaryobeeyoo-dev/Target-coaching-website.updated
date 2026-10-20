@@ -14,5 +14,5 @@ ADMIN_USERNAME = "targetadmin"
 [[d1_databases]]
 binding = "DB"
 database_name = "target-coaching-db"
-database_id = "target-coaching-db"
+database_id = "e23fe9b9-a680-4ced-a524-0d1988992d29"
 
